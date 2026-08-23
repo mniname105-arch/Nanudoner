@@ -598,8 +598,12 @@ const firebaseConfig = {
     function loadData() {
     state.logo = 'logo.PNG';
 
+    var cutoffDate = new Date();
+    cutoffDate.setDate(cutoffDate.getDate() - 60);
+    var cutoffTimestamp = cutoffDate.getTime();
+    var cutoffString = toYYYYMMDD(cutoffDate); 
 
-          db.collection('menu').onSnapshot(function(snapshot) {
+    db.collection('menu').onSnapshot(function(snapshot) {
       state.menu = [];
       snapshot.forEach(function(doc) {
         state.menu.push(doc.data());
@@ -616,8 +620,6 @@ const firebaseConfig = {
       renderAdminItems();
     });
 
-
-
     db.collection('settings').doc('categories').onSnapshot(function(doc) {
       if(doc.exists && doc.data().list) {
         state.categories = doc.data().list;
@@ -627,7 +629,10 @@ const firebaseConfig = {
       populateCategorySelect();
     });
 
-    db.collection('sales').orderBy('timestamp', 'desc').onSnapshot(function(snapshot) {
+    db.collection('sales')
+      .where('timestamp', '>=', cutoffTimestamp)
+      .orderBy('timestamp', 'desc')
+      .onSnapshot(function(snapshot) {
       state.sales = [];
       snapshot.forEach(function(doc) {
         state.sales.push(doc.data());
@@ -637,7 +642,9 @@ const firebaseConfig = {
       }
     });
 
-    db.collection('expenses').onSnapshot(function(snapshot) {
+    db.collection('expenses')
+      .where('date', '>=', cutoffString)
+      .onSnapshot(function(snapshot) {
       state.expenses = [];
       snapshot.forEach(function(doc) {
         state.expenses.push(doc.data());
@@ -647,6 +654,7 @@ const firebaseConfig = {
       }
     });
   }
+
   
   function saveCats() { db.collection('settings').doc('categories').set({ list: state.categories }); }
 
