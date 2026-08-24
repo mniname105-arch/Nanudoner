@@ -575,6 +575,9 @@ const firebaseConfig = {
     editingExpId: null
   };
 
+  // Flag to check if heavy data was loaded
+  var heavyDataLoaded = false;
+
     var DEFAULT_MENU = [
     { id: 'meat-doner',      name: 'Meat Doner',           price: 4500, category: 'Doner',  img: '', emoji: '🥙' },
     { id: 'chicken-doner',   name: 'Chicken Doner',        price: 3500, category: 'Doner',  img: '', emoji: '🥙' },
@@ -595,13 +598,9 @@ const firebaseConfig = {
   }
   function lsSet(key, val) { try { localStorage.setItem(key, JSON.stringify(val)); } catch (e) {} }
 
-    function loadData() {
+  // FIX: Light load data on start
+  function loadData() {
     state.logo = 'logo.PNG';
-
-    var cutoffDate = new Date();
-    cutoffDate.setDate(cutoffDate.getDate() - 60);
-    var cutoffTimestamp = cutoffDate.getTime();
-    var cutoffString = toYYYYMMDD(cutoffDate); 
 
     db.collection('menu').onSnapshot(function(snapshot) {
       state.menu = [];
@@ -628,6 +627,21 @@ const firebaseConfig = {
       renderCatChips();
       populateCategorySelect();
     });
+  }
+
+  // FIX: New function to load heavy history only when asked
+  function loadHeavyData(callback) {
+    if (heavyDataLoaded) {
+      if (callback) callback();
+      return;
+    }
+    showToast("Loading reports data...");
+    heavyDataLoaded = true;
+
+    var cutoffDate = new Date();
+    cutoffDate.setDate(cutoffDate.getDate() - 60);
+    var cutoffTimestamp = cutoffDate.getTime();
+    var cutoffString = toYYYYMMDD(cutoffDate); 
 
     db.collection('sales')
       .where('timestamp', '>=', cutoffTimestamp)
@@ -639,6 +653,9 @@ const firebaseConfig = {
       });
       if(document.getElementById('sales-modal').classList.contains('open')) {
           openSales(); 
+      }
+      if(document.getElementById('calendar-modal').classList.contains('open')) {
+          renderCalendar(); 
       }
     });
 
@@ -652,9 +669,16 @@ const firebaseConfig = {
       if(document.getElementById('expenses-modal').classList.contains('open')) {
           renderExpenses();
       }
+      if(document.getElementById('calendar-modal').classList.contains('open')) {
+          renderCalendar(); 
+      }
     });
-  }
 
+    // Execute callback immediately to open the modal while data fetches in background
+    setTimeout(function() {
+      if (callback) callback();
+    }, 400);
+  }
   
   function saveCats() { db.collection('settings').doc('categories').set({ list: state.categories }); }
 
@@ -813,14 +837,12 @@ const firebaseConfig = {
   function printReceipt() {
     var content = document.getElementById('receipt-content').innerHTML;
     
-    // FIX: Automatically replace characters that break the thermal printer
     content = content.replace(/Döner/g, 'Doner');
     content = content.replace(/ö/g, 'o');
 
     var win = window.open('', '_blank', 'width=400,height=600');
     if (!win) { showToast('Allow popups to print'); return; }
     
-    // FIX: Adjusted the inline styles so the popup perfectly matches the 80mm printer paper width and kills all margins
         win.document.write('<html><head><title>Receipt</title><style>'
       + '@page { size: 80mm auto; margin: 0; } '
       + 'body { font-family: "Courier New", Courier, monospace; font-size: 14px; padding: 0 !important; width: 80mm; margin: 0 !important; color: #000; height: auto !important; }'
@@ -845,7 +867,10 @@ const firebaseConfig = {
     document.getElementById('cash-input').value = '';
   }
 
+  // FIX: Added lazy loading check
   function openSales() {
+    if (!heavyDataLoaded) { loadHeavyData(openSales); return; }
+
     var today = new Date(); today.setHours(0,0,0,0);
     var todaySales = state.sales.filter(function(s){ return s.timestamp >= today.getTime(); });
     var totalRevenue = todaySales.reduce(function(sum, s){ return sum + s.total; }, 0);
@@ -885,7 +910,10 @@ const firebaseConfig = {
     showToast('Sales cleared');
   }
 
+  // FIX: Added lazy loading check
   function printReport() {
+    if (!heavyDataLoaded) { loadHeavyData(printReport); return; }
+
     if (state.sales.length === 0) { showToast('No sales to print'); return; }
 
     var html = '<html><head><title>Sales Report</title><style>'
@@ -1163,9 +1191,12 @@ const firebaseConfig = {
     showDayDetails(d.getFullYear(), d.getMonth(), d.getDate());
   }
 
+  // FIX: Added lazy loading check
   function openExpenses() {
+    if (!heavyDataLoaded) { loadHeavyData(openExpenses); return; }
+
     document.getElementById('exp-date').value = toYYYYMMDD(new Date());
-    document.getElementById('filter-exp-date').value = toYYYYMMDD(new Date()); // Default filter to today
+    document.getElementById('filter-exp-date').value = toYYYYMMDD(new Date()); 
     document.getElementById('filter-exp-cat').value = 'All';
     resetExpenseForm();
     renderExpenses();
@@ -1263,7 +1294,10 @@ const firebaseConfig = {
 
   var months = ["January","February","March","April","May","June","July","August","September","October","November","December"];
 
+  // FIX: Added lazy loading check
   function openCalendar() {
+    if (!heavyDataLoaded) { loadHeavyData(openCalendar); return; }
+
     state.calDate = new Date(); 
     document.getElementById('cal-day-details').style.display = 'none';
     renderCalendar();
