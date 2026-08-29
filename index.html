@@ -630,27 +630,25 @@ const firebaseConfig = {
   }
 
   // FIX: New function to load heavy history only when asked
-  function loadHeavyData(callback) {
+          function loadHeavyData(callback) {
     if (heavyDataLoaded) {
       if (callback) callback();
       return;
     }
-    showToast("Loading reports data...");
+    showToast("Loading all historical data...");
     heavyDataLoaded = true;
 
-    var cutoffDate = new Date();
-    cutoffDate.setDate(cutoffDate.getDate() - 60);
-    var cutoffTimestamp = cutoffDate.getTime();
-    var cutoffString = toYYYYMMDD(cutoffDate); 
-
+    // Fetch all sales, ordered newest to oldest, with no date limits
     db.collection('sales')
-      .where('timestamp', '>=', cutoffTimestamp)
       .orderBy('timestamp', 'desc')
       .onSnapshot(function(snapshot) {
       state.sales = [];
       snapshot.forEach(function(doc) {
         state.sales.push(doc.data());
       });
+      
+      if (callback) { callback(); callback = null; }
+
       if(document.getElementById('sales-modal').classList.contains('open')) {
           openSales(); 
       }
@@ -659,13 +657,16 @@ const firebaseConfig = {
       }
     });
 
+    // Fetch all expenses with no date limits
     db.collection('expenses')
-      .where('date', '>=', cutoffString)
       .onSnapshot(function(snapshot) {
       state.expenses = [];
       snapshot.forEach(function(doc) {
         state.expenses.push(doc.data());
       });
+      
+      if (callback) { callback(); callback = null; }
+
       if(document.getElementById('expenses-modal').classList.contains('open')) {
           renderExpenses();
       }
@@ -673,13 +674,8 @@ const firebaseConfig = {
           renderCalendar(); 
       }
     });
-
-    // Execute callback immediately to open the modal while data fetches in background
-    setTimeout(function() {
-      if (callback) callback();
-    }, 400);
   }
-  
+
   function saveCats() { db.collection('settings').doc('categories').set({ list: state.categories }); }
 
   function fmt(n) { return Number(n).toLocaleString() + ' IQD'; }
