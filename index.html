@@ -575,9 +575,6 @@ const firebaseConfig = {
     editingExpId: null
   };
 
-  // Flag to check if heavy data was loaded
-  var heavyDataLoaded = false;
-
     var DEFAULT_MENU = [
     { id: 'meat-doner',      name: 'Meat Doner',           price: 4500, category: 'Doner',  img: '', emoji: '🥙' },
     { id: 'chicken-doner',   name: 'Chicken Doner',        price: 3500, category: 'Doner',  img: '', emoji: '🥙' },
@@ -629,55 +626,35 @@ const firebaseConfig = {
     });
   }
 
-  // FIX: New function to load heavy history only when asked
-  function loadHeavyData(callback) {
-    if (heavyDataLoaded) {
-      if (callback) callback();
-      return;
-    }
-    showToast("Loading reports data...");
-    heavyDataLoaded = true;
-
+  // FIX: One-time fetches instead of permanent live listeners.
+  // Sales/expenses history is viewed on demand (Sales, Expenses, Reports),
+  // so it doesn't need a standing connection updating in the background —
+  // we just re-fetch fresh data each time one of those views is opened.
+  function fetchSalesData() {
     var cutoffDate = new Date();
     cutoffDate.setDate(cutoffDate.getDate() - 60);
     var cutoffTimestamp = cutoffDate.getTime();
-    var cutoffString = toYYYYMMDD(cutoffDate); 
-
-    db.collection('sales')
+    return db.collection('sales')
       .where('timestamp', '>=', cutoffTimestamp)
       .orderBy('timestamp', 'desc')
-      .onSnapshot(function(snapshot) {
-      state.sales = [];
-      snapshot.forEach(function(doc) {
-        state.sales.push(doc.data());
+      .get()
+      .then(function(snapshot) {
+        state.sales = [];
+        snapshot.forEach(function(doc) { state.sales.push(doc.data()); });
       });
-      if(document.getElementById('sales-modal').classList.contains('open')) {
-          openSales(); 
-      }
-      if(document.getElementById('calendar-modal').classList.contains('open')) {
-          renderCalendar(); 
-      }
-    });
+  }
 
-    db.collection('expenses')
+  function fetchExpensesData() {
+    var cutoffDate = new Date();
+    cutoffDate.setDate(cutoffDate.getDate() - 60);
+    var cutoffString = toYYYYMMDD(cutoffDate);
+    return db.collection('expenses')
       .where('date', '>=', cutoffString)
-      .onSnapshot(function(snapshot) {
-      state.expenses = [];
-      snapshot.forEach(function(doc) {
-        state.expenses.push(doc.data());
+      .get()
+      .then(function(snapshot) {
+        state.expenses = [];
+        snapshot.forEach(function(doc) { state.expenses.push(doc.data()); });
       });
-      if(document.getElementById('expenses-modal').classList.contains('open')) {
-          renderExpenses();
-      }
-      if(document.getElementById('calendar-modal').classList.contains('open')) {
-          renderCalendar(); 
-      }
-    });
-
-    // Execute callback immediately to open the modal while data fetches in background
-    setTimeout(function() {
-      if (callback) callback();
-    }, 400);
   }
   
   function saveCats() { db.collection('settings').doc('categories').set({ list: state.categories }); }
@@ -817,9 +794,13 @@ const firebaseConfig = {
     if (!state.cart.length) return;
     var total = cartTotal(), cash = parseFloat(document.getElementById('cash-input').value) || 0;
     var saleId = uid();
-    var sale = { id: saleId, timestamp: Date.now(), items: JSON.parse(JSON.stringify(state.cart)), total: total, cash: cash, change: cash - total };
+    var strippedItems = state.cart.map(function(i) {
+      return { id: i.id, name: i.name, price: i.price, qty: i.qty, category: i.category };
+    });
+    var sale = { id: saleId, timestamp: Date.now(), items: strippedItems, total: total, cash: cash, change: cash - total };
     
     db.collection('sales').doc(saleId).set(sale);
+    state.sales.unshift(sale); // keep local history in sync since we no longer use a live listener
     
     var itemsH = sale.items.map(function(i){ return '<div class="receipt-row"><span>'+esc(i.name)+' x'+i.qty+'</span><span>'+fmt(i.price*i.qty)+'</span></div>'; }).join('');
     var changeH = sale.cash > 0 ? '<hr class="receipt-divider"><div class="receipt-row"><span>Cash</span><span>'+fmt(sale.cash)+'</span></div><div class="receipt-change-row"><span>Change</span><span>'+fmt(Math.max(0,sale.change))+'</span></div>' : '';
@@ -867,10 +848,11 @@ const firebaseConfig = {
     document.getElementById('cash-input').value = '';
   }
 
-  // FIX: Added lazy loading check
   function openSales() {
-    if (!heavyDataLoaded) { loadHeavyData(openSales); return; }
+    fetchSalesData().then(renderSalesModal);
+  }
 
+  function renderSalesModal() {
     var today = new Date(); today.setHours(0,0,0,0);
     var todaySales = state.sales.filter(function(s){ return s.timestamp >= today.getTime(); });
     var totalRevenue = todaySales.reduce(function(sum, s){ return sum + s.total; }, 0);
@@ -899,7 +881,9 @@ const firebaseConfig = {
   function deleteSale(id) {
     if (!confirm('Delete this order? This will remove it from your daily totals.')) return;
     db.collection('sales').doc(id).delete();
+    state.sales = state.sales.filter(function(s){ return s.id !== id; });
     showToast('Order deleted');
+    renderSalesModal();
   }
 
   function clearSales() {
@@ -907,13 +891,16 @@ const firebaseConfig = {
     state.sales.forEach(function(s) {
         db.collection('sales').doc(s.id).delete();
     });
+    state.sales = [];
     showToast('Sales cleared');
+    renderSalesModal();
   }
 
-  // FIX: Added lazy loading check
   function printReport() {
-    if (!heavyDataLoaded) { loadHeavyData(printReport); return; }
+    fetchSalesData().then(doPrintReport);
+  }
 
+  function doPrintReport() {
     if (state.sales.length === 0) { showToast('No sales to print'); return; }
 
     var html = '<html><head><title>Sales Report</title><style>'
@@ -1164,8 +1151,10 @@ const firebaseConfig = {
 
   function openExpensesForDate(dateStr) {
     closeModal('calendar-modal');
-    openExpenses();
-    document.getElementById('exp-date').value = dateStr;
+    fetchExpensesData().then(function() {
+      doOpenExpenses();
+      document.getElementById('exp-date').value = dateStr;
+    });
   }
 
   function addManualSaleForDate(dateStr) {
@@ -1186,15 +1175,17 @@ const firebaseConfig = {
     };
 
     db.collection('sales').doc(saleId).set(sale);
+    state.sales.push(sale);
     showToast("Past sale added!");
     
     showDayDetails(d.getFullYear(), d.getMonth(), d.getDate());
   }
 
-  // FIX: Added lazy loading check
   function openExpenses() {
-    if (!heavyDataLoaded) { loadHeavyData(openExpenses); return; }
+    fetchExpensesData().then(doOpenExpenses);
+  }
 
+  function doOpenExpenses() {
     document.getElementById('exp-date').value = toYYYYMMDD(new Date());
     document.getElementById('filter-exp-date').value = toYYYYMMDD(new Date()); 
     document.getElementById('filter-exp-cat').value = 'All';
@@ -1225,6 +1216,7 @@ const firebaseConfig = {
     } else {
       var newExp = { id: uid(), date: date, category: cat, desc: desc, amount: amt, payment: pay, notes: notes };
       db.collection('expenses').doc(newExp.id).set(newExp);
+      state.expenses.push(newExp);
       showToast('Expense added');
     }
     
@@ -1250,7 +1242,9 @@ const firebaseConfig = {
   function deleteExpense(id) {
     if(!confirm('Delete this expense?')) return;
     db.collection('expenses').doc(id).delete();
+    state.expenses = state.expenses.filter(function(e){ return e.id !== id; });
     showToast('Expense deleted');
+    renderExpenses();
   }
 
   function cancelExpenseEdit() { resetExpenseForm(); }
@@ -1294,14 +1288,13 @@ const firebaseConfig = {
 
   var months = ["January","February","March","April","May","June","July","August","September","October","November","December"];
 
-  // FIX: Added lazy loading check
   function openCalendar() {
-    if (!heavyDataLoaded) { loadHeavyData(openCalendar); return; }
-
-    state.calDate = new Date(); 
-    document.getElementById('cal-day-details').style.display = 'none';
-    renderCalendar();
-    openModal('calendar-modal');
+    Promise.all([fetchSalesData(), fetchExpensesData()]).then(function() {
+      state.calDate = new Date();
+      document.getElementById('cal-day-details').style.display = 'none';
+      renderCalendar();
+      openModal('calendar-modal');
+    });
   }
 
   function changeMonth(delta) {
